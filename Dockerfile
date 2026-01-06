@@ -14,30 +14,30 @@ RUN git clone --depth 1 https://github.com/louislam/uptime-kuma.git .
 FROM louislam/uptime-kuma:builder-go AS build_healthcheck
 
 ############################################
-# 阶段 3: 构建层 (使用官方 Node 镜像，确保所有命令可用)
+# 阶段 3: 构建层 (使用最新 Node 20 镜像，确保环境最新)
 ############################################
-FROM node:18-bullseye AS build
+FROM node:20-bullseye AS build
 WORKDIR /app
 
-# 设置 Playwright 浏览器存放路径
+# 设置核心变量
 ENV PLAYWRIGHT_BROWSERS_PATH=/app/pw-browsers
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1
 
-# 1. 从 fetch-source 拷贝源码
+# 1. 拷贝源码
 COPY --from=fetch-source /src /app
 
-# 2. 升级 Playwright 并安装依赖
-# 不再使用 sed，直接用 npm install 强制升级，这会自动修改 package.json
-RUN npm install playwright@1.56.0 && \
-    npm ci --omit=dev
+# 2. 【核心修复】强制升级 Playwright
+# 使用绝对路径指向 npm，并确保全局和本地都安装，以绝后患
+RUN /usr/local/bin/npm install -g playwright@1.56.0 && \
+    /usr/local/bin/npm install playwright@1.56.0 && \
+    /usr/local/bin/npm ci --omit=dev
 
-# 3. 安装 Playwright 浏览器内核 (Chromium)
-RUN npx playwright install chromium
+# 3. 【核心修复】使用全局命令下载浏览器内核
+# 如果 npx 找不到，就直接调用全局安装好的 playwright
+RUN /usr/local/bin/node /usr/local/lib/node_modules/playwright/cli.js install chromium
 
-# 4. 拷贝健康检查程序
+# 4. 拷贝健康检查程序并处理权限
 COPY --from=build_healthcheck /app/extra/healthcheck /app/extra/healthcheck
-
-# 5. 准备数据目录并处理权限
 RUN mkdir -p ./data && chown -R 1000:1000 /app
 
 ############################################
@@ -49,11 +49,10 @@ WORKDIR /app
 ENV UPTIME_KUMA_IS_CONTAINER=1
 ENV PLAYWRIGHT_BROWSERS_PATH=/app/pw-browsers
 
-# 从构建阶段拷贝完整的 /app 目录
-# 此时已经包含了升级好的 node_modules 和浏览器内核
+# 拷贝构建产物
 COPY --chown=node:node --from=build /app /app
 
-# 切换到 node 用户（ID 为 1000）
+# 确保以 node 用户运行
 USER node
 
 EXPOSE 3001
